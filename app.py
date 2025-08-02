@@ -50,36 +50,62 @@ def cleanup_old_files():
 
 def get_ydl_opts(download=False):
     """Bot koruması bypass eden yt-dlp ayarları"""
+    import random
+    
+    # Farklı user agent'lar rotasyonu
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0'
+    ]
+    
+    selected_ua = random.choice(user_agents)
+    
     opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user_agent': selected_ua,
         'referer': 'https://www.youtube.com/',
+        'sleep_interval': 2,  # İstekler arası bekleme
+        'max_sleep_interval': 5,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Accept-Encoding': 'gzip,deflate',
-            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'User-Agent': selected_ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
         },
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android_creator', 'android', 'web'],
                 'skip': ['dash', 'hls'],
-                'player_skip': ['configs', 'webpage']
+                'player_skip': ['configs', 'webpage'],
+                'innertube_host': 'studio.youtube.com',
+                'innertube_key': 'AIzaSyBUPetSUmoZL-OhlxA7wSac5XinrygCqMo'
             }
-        }
+        },
+        'geo_bypass': True,
+        'geo_bypass_country': 'US'
     }
     
     if download:
         opts.update({
             'ignoreerrors': True,
-            'retries': 3,
-            'fragment_retries': 3,
-            'skip_unavailable_fragments': True
+            'retries': 5,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
+            'keep_video': False,
+            'embed_chapters': False,
+            'embed_info_json': False
         })
     
     return opts
@@ -184,7 +210,7 @@ def get_video_info():
 
 @app.route('/api/download', methods=['POST'])
 def download_video():
-    """Video indirme"""
+    """Video indirme - External site yönlendirmesi"""
     try:
         data = request.get_json()
         url = data.get('url')
@@ -197,104 +223,29 @@ def download_video():
         if not video_id:
             return jsonify({"error": "Geçersiz YouTube URL"}), 400
         
-        # Format seçimi
-        if quality == 'audio':
-            format_selector = 'bestaudio[ext=m4a]/bestaudio'
-            ext = 'mp3'
-        elif quality == 'highest':
-            format_selector = 'best[height<=1080][ext=mp4]/best[height<=1080]/best'
-            ext = 'mp4'
-        elif quality == '1080p':
-            format_selector = 'best[height<=1080][ext=mp4]/best[height<=1080]/best'
-            ext = 'mp4'
-        elif quality == '720p':
-            format_selector = 'best[height<=720][ext=mp4]/best[height<=720]/best'
-            ext = 'mp4'
-        elif quality == '480p':
-            format_selector = 'best[height<=480][ext=mp4]/best[height<=480]/best'
-            ext = 'mp4'
-        else:  # 360p
-            format_selector = 'best[height<=360][ext=mp4]/best[height<=360]/best'
-            ext = 'mp4'
+        # External download services
+        external_services = {
+            'highest': f'https://www.y2mate.com/youtube/{video_id}',
+            '1080p': f'https://www.y2mate.com/youtube/{video_id}',
+            '720p': f'https://www.y2mate.com/youtube/{video_id}',
+            '480p': f'https://www.y2mate.com/youtube/{video_id}',
+            '360p': f'https://www.y2mate.com/youtube/{video_id}',
+            'audio': f'https://ytmp3.cc/en13/{video_id}/'
+        }
         
-        # Güvenli dosya adı
-        safe_filename = f"video_{video_id}_{quality}_{int(time.time())}.{ext}"
-        output_path = os.path.join(TEMP_DIR, safe_filename)
+        download_url = external_services.get(quality, external_services['720p'])
         
-        # Bot koruması bypass eden ayarlar
-        ydl_opts = get_ydl_opts(download=True)
-        ydl_opts.update({
-            'format': format_selector,
-            'outtmpl': output_path,
+        return jsonify({
+            "success": True,
+            "message": "İndirme sitesine yönlendiriliyorsunuz",
+            "external_url": download_url,
+            "quality": quality,
+            "instructions": "Yeni sekmede açılan siteden videonuzu indirebilirsiniz."
         })
         
-        # Ses için özel işlem
-        if quality == 'audio':
-            ydl_opts.update({
-                'format': 'bestaudio',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                'prefer_ffmpeg': True,
-            })
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Önce bilgi al
-                info = ydl.extract_info(url, download=False)
-                if not info:
-                    raise Exception("Video bilgisi alınamadı")
-                
-                title = info.get('title', 'video')
-                safe_title = re.sub(r'[^\w\-_\.]', '_', title[:50])
-                final_filename = f"{safe_title}_{quality}.{ext}"
-                final_path = os.path.join(TEMP_DIR, final_filename)
-                
-                # Çıktı dosyasını güncelle
-                ydl_opts['outtmpl'] = final_path
-                ydl.params.update(ydl_opts)
-                
-                # Video indir
-                ydl.download([url])
-                
-                # Dosya kontrolü
-                downloaded_file = None
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 1000:
-                    downloaded_file = final_path
-                else:
-                    # Alternatif dosya adlarını kontrol et
-                    for file in os.listdir(TEMP_DIR):
-                        file_path = os.path.join(TEMP_DIR, file)
-                        if (video_id in file or safe_title[:20] in file) and os.path.getsize(file_path) > 1000:
-                            downloaded_file = file_path
-                            final_filename = file
-                            break
-                
-                if not downloaded_file:
-                    raise Exception("İndirme tamamlanamadı - dosya bulunamadı")
-                
-                file_size = os.path.getsize(downloaded_file)
-                
-                # Eski dosyaları temizle
-                threading.Thread(target=cleanup_old_files, daemon=True).start()
-                
-                return jsonify({
-                    "success": True,
-                    "message": "Video başarıyla indirildi",
-                    "download_url": f"/api/file/{os.path.basename(downloaded_file)}",
-                    "file_size": file_size,
-                    "filename": os.path.basename(downloaded_file)
-                })
-                
-        except Exception as download_error:
-            print(f"Download error: {download_error}")
-            raise Exception(f"İndirme hatası: {str(download_error)}")
-        
     except Exception as e:
-        print(f"General error in download_video: {e}")
-        return jsonify({"error": f"İndirme hatası: {str(e)}"}), 500
+        print(f"Download redirect error: {e}")
+        return jsonify({"error": f"Yönlendirme hatası: {str(e)}"}), 500
 
 @app.route('/api/file/<filename>')
 def download_file(filename):
