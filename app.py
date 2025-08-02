@@ -9,8 +9,11 @@ from urllib.parse import urlparse, parse_qs
 import re
 
 app = Flask(__name__)
-CORS(app)  # Tüm origin'lere izin ver
+# ESKI
 
+
+# YENİ  
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 # Geçici dosyalar için dizin
 TEMP_DIR = tempfile.mkdtemp()
 
