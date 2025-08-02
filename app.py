@@ -156,72 +156,102 @@ def download_video():
         if not video_id:
             return jsonify({"error": "Geçersiz YouTube URL"}), 400
         
-        # Kaliteye göre format seç
+        # Basit format seçimi
         if quality == 'audio':
-            format_selector = 'bestaudio/best'
+            format_selector = 'bestaudio[ext=m4a]/bestaudio'
             ext = 'mp3'
         elif quality == 'highest':
-            format_selector = 'best'
+            format_selector = 'best[height<=1080]'
+            ext = 'mp4'
+        elif quality == '1080p':
+            format_selector = 'best[height<=1080]'
+            ext = 'mp4'
+        elif quality == '720p':
+            format_selector = 'best[height<=720]'
+            ext = 'mp4'
+        elif quality == '480p':
+            format_selector = 'best[height<=480]'
             ext = 'mp4'
         else:
-            # Belirli kalite (örn: 720p)
-            height = quality.replace('p', '')
-            format_selector = f'best[height<={height}]'
+            format_selector = 'best[height<=360]'
             ext = 'mp4'
         
         # Dosya adını oluştur
-        temp_filename = f"{video_id}_{quality}_{int(time.time())}"
+        safe_title = re.sub(r'[^\w\-_\.]', '_', video_id)
+        temp_filename = f"{safe_title}_{quality}_{int(time.time())}"
+        output_path = os.path.join(TEMP_DIR, f'{temp_filename}.%(ext)s')
         
-        # yt-dlp ayarları
+        # yt-dlp ayarları - basitleştirilmiş
         ydl_opts = {
             'format': format_selector,
-            'outtmpl': os.path.join(TEMP_DIR, f'{temp_filename}.%(ext)s'),
+            'outtmpl': output_path,
             'quiet': True,
-            'no_warnings': True
+            'no_warnings': True,
+            'ignoreerrors': True,
         }
         
-        # Ses dosyası için özel ayarlar
+        # Ses için özel işlem
         if quality == 'audio':
             ydl_opts.update({
-                'format': 'bestaudio/best',
+                'format': 'bestaudio',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
-                }]
+                }],
+                'prefer_ffmpeg': True,
             })
         
         # Video indir
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        
-        # İndirilen dosyayı bul
-        downloaded_file = None
-        for filename in os.listdir(TEMP_DIR):
-            if filename.startswith(temp_filename):
-                downloaded_file = os.path.join(TEMP_DIR, filename)
-                break
-        
-        if not downloaded_file or not os.path.exists(downloaded_file):
-            return jsonify({"error": "Dosya indirilemedi"}), 500
-        
-        # Dosya bilgilerini al
-        file_size = os.path.getsize(downloaded_file)
-        
-        # Eski dosyaları temizle (arka planda)
-        threading.Thread(target=cleanup_old_files, daemon=True).start()
-        
-        return jsonify({
-            "success": True,
-            "message": "Video başarıyla indirildi",
-            "download_url": f"/api/file/{os.path.basename(downloaded_file)}",
-            "file_size": file_size,
-            "filename": os.path.basename(downloaded_file)
-        })
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Önce info al
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', 'video')
+                
+                # Güvenli dosya adı oluştur
+                safe_title = re.sub(r'[^\w\-_\.]', '_', title[:50])
+                final_filename = f"{safe_title}_{quality}.{ext}"
+                final_output = os.path.join(TEMP_DIR, final_filename)
+                
+                # Yeni ayarlarla indir
+                ydl_opts['outtmpl'] = final_output
+                ydl.params.update(ydl_opts)
+                ydl.download([url])
+                
+                # İndirilen dosyayı kontrol et
+                if os.path.exists(final_output) and os.path.getsize(final_output) > 1000:
+                    file_size = os.path.getsize(final_output)
+                    
+                    return jsonify({
+                        "success": True,
+                        "message": "Video başarıyla indirildi",
+                        "download_url": f"/api/file/{final_filename}",
+                        "file_size": file_size,
+                        "filename": final_filename
+                    })
+                else:
+                    # Alternatif dosya adlarını kontrol et
+                    for file in os.listdir(TEMP_DIR):
+                        if video_id in file and os.path.getsize(os.path.join(TEMP_DIR, file)) > 1000:
+                            file_size = os.path.getsize(os.path.join(TEMP_DIR, file))
+                            return jsonify({
+                                "success": True,
+                                "message": "Video başarıyla indirildi",
+                                "download_url": f"/api/file/{file}",
+                                "file_size": file_size,
+                                "filename": file
+                            })
+                    
+                    raise Exception("Dosya oluşturulamadı veya çok küçük")
+                        
+        except Exception as download_error:
+            print(f"Download error: {download_error}")
+            raise Exception(f"İndirme hatası: {str(download_error)}")
         
     except Exception as e:
+        print(f"General error: {e}")
         return jsonify({"error": f"İndirme hatası: {str(e)}"}), 500
-
 @app.route('/api/file/<filename>')
 def download_file(filename):
     """Dosyayı indir"""
